@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HTML5 Tetris</title>
+<style>
+  :root{ --bg:#0f1221; --fg:#e9eef5; --muted:#8ea0c0; --panel:#151a33; --accent:#5be37e; }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:radial-gradient(1200px 600px at 70% -10%,#1b2040 0%,#0f1221 55%); color:var(--fg); font-family:system-ui, -apple-system, Segoe UI, Roboto, Inter, Arial}
+  .wrap{display:grid; grid-template-columns:auto 260px; gap:18px; padding:18px; max-width:1080px; margin:0 auto}
+  canvas{background:#0a0f24; border:1px solid rgba(255,255,255,.08); border-radius:12px; display:block; width:100%; height:auto; image-rendering:pixelated}
+  .side{display:flex; flex-direction:column; gap:12px}
+  .card{background:rgba(255,255,255,.06); border:1px solid rgba(255,255,255,.08); border-radius:14px; padding:12px 14px}
+  h1{font-size:20px; margin:0 0 4px 0}
+  .muted{color:var(--muted); font-size:13px}
+  .btn{cursor:pointer; background:#1c2037; color:var(--fg); border:1px solid rgba(255,255,255,.12); border-radius:12px; padding:.55rem .9rem; font-weight:600;}
+  .gridSmall{display:grid; grid-template-rows:repeat(4,1fr); grid-template-columns:repeat(4,1fr); width:148px; height:148px; gap:1px; background:#0a0f24; border:1px solid rgba(255,255,255,.08); border-radius:10px; overflow:hidden}
+  .cell{background:#11173a}
+  .row{display:flex; align-items:center; gap:8px; justify-content:space-between}
+  .kbd{padding:2px 6px; border:1px solid rgba(255,255,255,.2); border-radius:6px; font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size:12px}
+  @media (max-width:860px){ .wrap{grid-template-columns:1fr} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <canvas id="board" width="300" height="600" aria-label="Tetris playfield"></canvas>
+  <div class="side">
+    <div class="card">
+      <h1>HTML5 Tetris</h1>
+      <div class="muted">Arrow keys move • <span class="kbd">Z</span>/<span class="kbd">X</span> rotate • <span class="kbd">Space</span> hard drop • <span class="kbd">Down</span> soft drop • <span class="kbd">P</span> pause • <span class="kbd">R</span> restart</div>
+    </div>
+    <div class="card">
+      <div class="row"><span>Score</span><strong id="score">0</strong></div>
+      <div class="row"><span>Lines</span><strong id="lines">0</strong></div>
+      <div class="row"><span>Level</span><strong id="level">1</strong></div>
+    </div>
+    <div class="card">
+      <div class="row"><span>Next</span></div>
+      <div id="nextGrid" class="gridSmall" aria-label="Next piece preview"></div>
+    </div>
+    <div class="card">
+      <button id="pauseBtn" class="btn">Pause</button>
+      <button id="restartBtn" class="btn">Restart</button>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const COLS = 10, ROWS = 20, TILE = 30; // canvas is 300x600
+  const canvas = document.getElementById('board');
+  const ctx = canvas.getContext('2d');
+  ctx.scale(TILE, TILE);
+
+  // Colors per tetromino type
+  const COLORS = {
+    I:'#29cbe5', J:'#4b6fff', L:'#ff9f43', O:'#ffd36b', S:'#5be37e', T:'#bf7bff', Z:'#ff6b6b'
+  };
+
+  // Tetromino definitions (4x4 matrices)
+  const SHAPES = {
+    I:[[0,0,0,0],[1,1,1,1],[0,0,0,0],[0,0,0,0]],
+    J:[[1,0,0],[1,1,1],[0,0,0]],
+    L:[[0,0,1],[1,1,1],[0,0,0]],
+    O:[[1,1],[1,1]],
+    S:[[0,1,1],[1,1,0],[0,0,0]],
+    T:[[0,1,0],[1,1,1],[0,0,0]],
+    Z:[[1,1,0],[0,1,1],[0,0,0]]
+  };
+  const TYPES = Object.keys(SHAPES);
+
+  // 7-bag generator
+  let bag = [];
+  function nextType(){
+    if(bag.length === 0){ bag = TYPES.slice(); for(let i=bag.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [bag[i],bag[j]]=[bag[j],bag[i]]; } }
+    return bag.pop();
+  }
+
+  function createMatrix(w,h){ const m=[]; while(h--) m.push(new Array(w).fill(0)); return m; }
+  const arena = createMatrix(COLS, ROWS);
+
+  function rotate(matrix, dir){
+    // Transpose
+    for(let y=0;y<matrix.length;y++){
+      for(let x=0;x<y;x++){
+        [matrix[x][y], matrix[y][x]] = [matrix[y][x], matrix[x][y]];
+      }
+    }
+    // Reverse rows for CW, columns for CCW
+    if(dir>0){ matrix.forEach(row=>row.reverse()); }
+    else { matrix.reverse(); }
+  }
+
+  function collides(arena, piece){
+    const m = piece.matrix, o = piece.pos;
+    for(let y=0;y<m.length;y++){
+      for(let x=0;x<m[y].length;x++){
+        if(m[y][x] !== 0 && (
+          arena[y + o.y] && arena[y + o.y][x + o.x]) !== 0){
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function merge(arena, piece){
+    piece.matrix.forEach((row,y)=>{
+      row.forEach((val,x)=>{ if(val){ arena[y+piece.pos.y][x+piece.pos.x] = piece.color; } });
+    });
+  }
+
+  function clearLines(){
+    let lines = 0;
+    outer: for(let y=arena.length-1; y>=0; y--){
+      for(let x=0; x<arena[y].length; x++){
+        if(arena[y][x] === 0) continue outer;
+      }
+      // full line
+      const row = arena.splice(y,1)[0].fill(0);
+      arena.unshift(row);
+      y++;
+      lines++;
+    }
+    return lines;
+  }
+
+  // Scoring
+  let score=0, lines=0, level=1;
+  function addScore(cleared){
+    const table = [0, 40, 100, 300, 1200];
+    score += table[cleared] * level;
+    lines += cleared;
+    level = 1 + Math.floor(lines/10);
+    updateHUD();
+  }
+  function updateHUD(){
+    document.getElementById('score').textContent = score;
+    document.getElementById('lines').textContent = lines;
+    document.getElementById('level').textContent = level;
+  }
+
+  // Current & next
+  const nextGrid = document.getElementById('nextGrid');
+  function renderNextPreview(type){
+    nextGrid.innerHTML = '';
+    for(let i=0;i<16;i++){ const d=document.createElement('div'); d.className='cell'; nextGrid.appendChild(d);}    
+    const gridCells = nextGrid.children;
+    const mat = SHAPES[type];
+    const c = COLORS[type];
+    // center within 4x4
+    const offY = Math.floor((4 - mat.length)/2);
+    const offX = Math.floor((4 - mat[0].length)/2);
+    for(let y=0;y<mat.length;y++){
+      for(let x=0;x<mat[y].length;x++){
+        if(mat[y][x]){
+          const idx = (y+offY)*4 + (x+offX);
+          gridCells[idx].style.background = c;
+        }
+      }
+    }
+  }
+
+  function createPiece(type){
+    const mat = SHAPES[type].map(r=>r.slice());
+    return { matrix: mat, pos: {x: (COLS>>1) - Math.ceil(mat[0].length/2), y: 0}, type, color: COLORS[type] };
+  }
+
+  let current = null;
+  let nextTypeId = nextType();
+  function spawn(){
+    const type = nextTypeId; 
+    current = createPiece(type);
+    nextTypeId = nextType();
+    renderNextPreview(nextTypeId);
+    if(collides(arena, current)){
+      // Game over
+      arena.forEach(r=>r.fill(0));
+      score=0; lines=0; level=1; updateHUD();
+    }
+  }
+
+  // Input handling
+  const keys = {left:false,right:false,down:false};
+  document.addEventListener('keydown', e=>{
+    const k = e.key.toLowerCase();
+    if(k==='arrowleft' || k==='a'){ move(-1); }
+    else if(k==='arrowright' || k==='d'){ move(1); }
+    else if(k==='arrowdown' || k==='s'){ dropSoft(); }
+    else if(k===' '){ e.preventDefault(); hardDrop(); }
+    else if(k==='z'){ rotateCurrent(-1); }
+    else if(k==='x' || k==='arrowup' || k==='w'){ rotateCurrent(1); }
+    else if(k==='p'){ togglePause(); }
+    else if(k==='r'){ restart(); }
+  });
+
+  function move(dir){
+    current.pos.x += dir;
+    if(collides(arena,current)) current.pos.x -= dir;
+  }
+  function rotateCurrent(dir){
+    const x0 = current.pos.x;
+    rotate(current.matrix, dir);
+    // wall kicks (simple)
+    let offset = 1;
+    while(collides(arena,current)){
+      current.pos.x += offset;
+      offset = -(offset + (offset>0 ? 1 : -1));
+      if(Math.abs(offset) > current.matrix[0].length){
+        rotate(current.matrix, -dir); current.pos.x = x0; return;
+      }
+    }
+  }
+
+  function dropSoft(){
+    current.pos.y++;
+    if(collides(arena,current)){
+      current.pos.y--; lockPiece();
+      spawn();
+      dropCounter = 0;
+      return;
+    }
+  }
+  function hardDrop(){
+    while(!collides(arena,current)) current.pos.y++;
+    current.pos.y--; lockPiece(); spawn(); dropCounter=0;
+  }
+
+  function lockPiece(){
+    merge(arena,current);
+    const cleared = clearLines();
+    if(cleared>0) addScore(cleared);
+  }
+
+  // Gravity timing
+  let lastTime=0, dropCounter=0;
+  function gravityInterval(){
+    // Level speed table (approx NES -> faster with level)
+    const base = 1000; // ms at level 1
+    const speed = Math.max(60, base - (level-1)*75);
+    return speed/1000; // seconds
+  }
+
+  let paused=false;
+  function togglePause(){ paused = !paused; }
+  function restart(){ arena.forEach(r=>r.fill(0)); score=0; lines=0; level=1; updateHUD(); spawn(); }
+
+  function drawMatrix(matrix, offset, color){
+    ctx.fillStyle = color;
+    for(let y=0;y<matrix.length;y++){
+      for(let x=0;x<matrix[y].length;x++){
+        if(matrix[y][x]){
+          ctx.fillRect(x+offset.x, y+offset.y, 1, 1);
+        }
+      }
+    }
+  }
+
+  function draw(){
+    // background grid
+    ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.fillStyle = '#0b1430';
+    ctx.fillRect(0,0,COLS,ROWS);
+    // arena
+    for(let y=0;y<ROWS;y++){
+      for(let x=0;x<COLS;x++){
+        const c = arena[y][x];
+        if(c){ ctx.fillStyle=c; ctx.fillRect(x,y,1,1); }
+        // subtle grid lines
+        ctx.strokeStyle='rgba(255,255,255,.04)';
+        ctx.lineWidth=0.01; ctx.strokeRect(x,y,1,1);
+      }
+    }
+    // current piece + ghost
+    // ghost drop preview
+    let gy = current.pos.y;
+    while(!collides(arena, {...current, pos:{x:current.pos.x, y:gy}})) gy++;
+    gy--;
+    ctx.globalAlpha = .25; drawMatrix(current.matrix, {x:current.pos.x, y:gy}, current.color); ctx.globalAlpha=1;
+
+    drawMatrix(current.matrix, current.pos, current.color);
+  }
+
+  function update(time=0){
+    const delta = (time - lastTime) / 1000; // seconds
+    lastTime = time;
+    if(!paused){
+      dropCounter += delta;
+      if(dropCounter > gravityInterval()){
+        dropSoft();
+        dropCounter = 0;
+      }
+      draw();
+    }
+    requestAnimationFrame(update);
+  }
+
+  // Init
+  spawn();
+  update();
+})();
+</script>
+</body>
+</html>
