@@ -1,0 +1,141 @@
+<!-- Free-fire–style HTML5 Mini Battle Royale with Bot-vs-Bot Combat, Player Shooting, and Winner Announcement -->
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Mini Battle Royale</title>
+<style>
+  html, body {margin:0; padding:0; overflow:hidden; background:#222; color:white; font-family:sans-serif;}
+  canvas {background:#4ac; display:block; margin:0 auto;}
+  #winnerScreen {
+    position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8);
+    display:flex; align-items:center; justify-content:center; font-size:3em; color:white; z-index:10;
+    visibility:hidden;
+  }
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="winnerScreen"></div>
+<script>
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+canvas.width = innerWidth;
+canvas.height = innerHeight;
+
+class Entity {
+  constructor(x,y,type) {
+    this.x = x; this.y = y; this.type = type; // 'player' or 'bot'
+    this.hp = 100;
+    this.alive = true;
+    this.target = null;
+  }
+  distTo(other) {return Math.hypot(this.x - other.x, this.y - other.y);}
+}
+
+let entities = [];
+let player = new Entity(canvas.width/2, canvas.height/2, 'player');
+entities.push(player);
+for(let i=0;i<10;i++) entities.push(new Entity(Math.random()*canvas.width, Math.random()*canvas.height, 'bot'));
+
+// bullets
+let bullets = [];
+function shoot(shooter, targetX, targetY) {
+  let angle = Math.atan2(targetY - shooter.y, targetX - shooter.x);
+  bullets.push({x: shooter.x, y: shooter.y, dx: Math.cos(angle)*5, dy: Math.sin(angle)*5, owner: shooter});
+}
+
+function updateBots(){
+  entities.filter(e=>e.type==='bot' && e.alive).forEach(bot=>{
+    let opponents = entities.filter(o=>o.alive && o!==bot);
+    if(opponents.length>0){
+      opponents.sort((a,b)=>bot.distTo(a)-bot.distTo(b));
+      bot.target = opponents[0];
+      let dx = bot.target.x - bot.x;
+      let dy = bot.target.y - bot.y;
+      let dist = Math.hypot(dx,dy);
+      if(dist>5){
+        bot.x += dx/dist * 1.5;
+        bot.y += dy/dist * 1.5;
+      }
+      if(dist<200 && Math.random()<0.02) {
+        shoot(bot, bot.target.x, bot.target.y);
+      }
+    }
+  });
+}
+
+function updatePlayer(){
+  let speed=3;
+  if(keys['w']) player.y-=speed;
+  if(keys['s']) player.y+=speed;
+  if(keys['a']) player.x-=speed;
+  if(keys['d']) player.x+=speed;
+}
+
+function updateBullets(){
+  bullets.forEach(b=>{
+    b.x += b.dx;
+    b.y += b.dy;
+    entities.forEach(e=>{
+      if(e.alive && e!==b.owner && Math.hypot(e.x-b.x, e.y-b.y) < 10){
+        e.hp -= 20;
+        if(e.hp <= 0) e.alive = false;
+        b.hit = true;
+      }
+    });
+  });
+  bullets = bullets.filter(b=>!b.hit && b.x>=0 && b.x<=canvas.width && b.y>=0 && b.y<=canvas.height);
+}
+
+function checkWinner(){
+  let alive = entities.filter(e=>e.alive);
+  if(alive.length===1){
+    document.getElementById('winnerScreen').textContent = alive[0].type==='player' ? 'You Win!' : 'Bot Wins!';
+    document.getElementById('winnerScreen').style.visibility='visible';
+  }
+}
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  entities.forEach(e=>{
+    if(!e.alive) return;
+    ctx.beginPath();
+    ctx.arc(e.x, e.y, 10, 0, Math.PI*2);
+    ctx.fillStyle = e.type==='player' ? 'yellow' : 'red';
+    ctx.fill();
+    ctx.fillStyle = 'white';
+    ctx.fillText(Math.floor(e.hp), e.x-10, e.y-15);
+  });
+  ctx.fillStyle = 'black';
+  bullets.forEach(b=>{
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 3, 0, Math.PI*2);
+    ctx.fill();
+  });
+}
+
+let keys={};
+addEventListener('keydown',e=>keys[e.key.toLowerCase()]=true);
+addEventListener('keyup',e=>keys[e.key.toLowerCase()]=false);
+
+canvas.addEventListener('click', e=>{
+  if(player.alive){
+    shoot(player, e.clientX, e.clientY);
+  }
+});
+
+function loop(){
+  if(player.alive){
+    updatePlayer();
+  }
+  updateBots();
+  updateBullets();
+  draw();
+  checkWinner();
+  requestAnimationFrame(loop);
+}
+loop();
+</script>
+</body>
+</html>
